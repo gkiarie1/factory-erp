@@ -1,9 +1,7 @@
-from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
-from datetime import datetime
+from extensions import db
+from sqlalchemy.dialects.postgresql import JSONB
 
-# Initialize the db
-db = SQLAlchemy()
 bcrypt = Bcrypt()
 
 class Employee(db.Model):
@@ -11,18 +9,21 @@ class Employee(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     staff_id = db.Column(db.String(50), unique=True, nullable=False)
     name = db.Column(db.String(150), nullable=False)
+    email = db.Column(db.String(150), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
     clock_in_status = db.Column(db.String(50), default='Not Clocked In')
     clock_in_status_timestamp = db.Column(db.DateTime, nullable=True)
     machine_line = db.Column(db.String(200), nullable=True)
-    attendance = db.Column(db.Text, default=0)
-    leave_day = db.Column(db.Integer, default=14)
-    approved_leaves = db.Column(db.JSON, default=[])
-    warnings = db.Column(db.JSON, default=[])
+    remaining_leave_days = db.Column(db.Integer, default=14)  
+    approved_leaves = db.Column(JSONB, default=[])  
+    rejected_leaves = db.Column(JSONB, default=[])  
+    warnings = db.Column(JSONB, default=[])  
     contract_details = db.Column(db.Text, nullable=True)
     overtime_hours = db.Column(db.Float, default=0.0)
+    rejected_overtimes = db.Column(JSONB, default=[]) 
 
-    # Relationship to User
     user = db.relationship('User', back_populates='employee', uselist=False)
+
 
 class User(db.Model):
     __tablename__ = 'users'  
@@ -52,10 +53,10 @@ def create_default_users():
     employee_user = User.query.filter_by(email=employee_email).first()
     if not employee_user:
         hashed_password = bcrypt.generate_password_hash('employee123').decode('utf-8')
-        new_employee = Employee(name='Default Employee', staff_id='EMP001') 
+        new_employee = Employee(name='Default Employee', staff_id='EMP001', password=hashed_password, email=employee_email) 
         db.session.add(new_employee)
         db.session.flush() 
-        new_employee_user = User(email=employee_email, password=hashed_password, role='employee', employee_id=new_employee.id)
+        new_employee_user = User(email=employee_email, password=hashed_password, role='employee', employee_id=new_employee.id, staff_id='EMP001')
         db.session.add(new_employee_user)
         print(f'Employee user {employee_email} created.')
 

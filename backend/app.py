@@ -1,25 +1,25 @@
-from flask import Flask,request
-from flask_jwt_extended import JWTManager
+from flask import Flask, request
 from flask_cors import CORS
-from flask_socketio import SocketIO, disconnect
 from flask_jwt_extended import decode_token
 from apscheduler.schedulers.background import BackgroundScheduler
 import datetime
-from models import db, bcrypt, create_default_users,Employee
-from routes import routes_bp
+from models import db, create_default_users, Employee
 import os
+from extensions import db, bcrypt, jwt, socketio
+from flask_socketio import disconnect
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] ='postgresql://kiarie:Georgeluke2018#@localhost/erp'
-JWT_SECRET_KEY = 'super-secret'
+app.config['JWT_SECRET_KEY'] = 'super-secret'  
 
 # Initialize Extensions
 db.init_app(app)
-bcrypt.init_app(app)  
-jwt = JWTManager(app)
+bcrypt.init_app(app)
+jwt.init_app(app)
+socketio.init_app(app)
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins=["http://localhost:3000"], logger=True, engineio_logger=True)
 
+from routes import routes_bp  
 app.register_blueprint(routes_bp)
 
 def valid_token(token):
@@ -43,8 +43,10 @@ def connect():
 def handle_message(data):
     print(f"Message received: {data}")
 
+
 # Create Database Tables
 with app.app_context():
+    db.drop_all()
     db.create_all()
     create_default_users()
 
@@ -96,4 +98,4 @@ scheduler.add_job(deduct_leave_days, 'cron', hour=0, minute=0)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, debug=True, allow_unsafe_werkzeug=True, host='0.0.0.0',port=port)
+    socketio.run(app, port=port)

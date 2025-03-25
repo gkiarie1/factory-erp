@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AuthContext } from './AuthProvider';
 
 const Login = () => {
   const [staffId, setStaffId] = useState(''); 
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const navigate = useNavigate();
+  const { login } = useContext(AuthContext);
 
   const handleLogin = () => {
     if (!staffId || !password) {
@@ -13,19 +15,23 @@ const Login = () => {
       return;
     }
 
-    fetch('https://localhost:5000/login', {
+    fetch('http://localhost:5000/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ staff_id: staffId, password }), 
     })
       .then((response) => response.json())
       .then((data) => {
-        console.log(data)
         if (data.access_token) {
-          localStorage.setItem('token', data.access_token);
-          localStorage.setItem('role', data.role);
-          setErrorMessage(''); 
-          navigate(data.role === 'admin' ? '/admin' : '/profile');
+          login(data.access_token, data.role);
+
+          if (data.role === 'admin') {
+            navigate('/admin');
+          } else {
+            navigate('/profile');
+          }
+          
+          setErrorMessage('');
         } else {
           setErrorMessage('Invalid login credentials.');
         }

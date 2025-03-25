@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
 import "react-datepicker/dist/react-datepicker.css";
+import { FaBell } from "react-icons/fa";
 
 const AdminDashboard = () => {
   const socketRef = useRef();
@@ -15,9 +16,26 @@ const AdminDashboard = () => {
     password: "",
     staff_id: "",
   });
+  const [leaveRequests, setLeaveRequests] = useState([]);
+  const [overtimeRequests, setOvertimeRequests] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false); 
   const [selectedEmployee, setSelectedEmployee] = useState(null); 
   const [warningText, setWarningText] = useState(''); 
+  const [showDropdown, setShowDropdown] = useState(false);
+
+  
+  const getAuthToken = () => {
+    const adminToken = localStorage.getItem("admin_token");
+    const adminRole = localStorage.getItem("admin_role");
+  
+    if (adminToken && adminRole === "admin") {
+      return adminToken;
+    } else {
+      return null; 
+    }
+  };
+
+  const token = getAuthToken();
 
   useEffect(() => {
     if (message) {
@@ -29,9 +47,8 @@ const AdminDashboard = () => {
   }, [message]);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-
-    fetch("https://localhost:5000/admin/dashboard", {
+    const token = getAuthToken();
+    fetch("http://localhost:5000/admin/dashboard", {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -46,47 +63,61 @@ const AdminDashboard = () => {
         setLoading(false);
       });
 
-    // Initialize socket connection
-    socketRef.current = io("https://localhost:5000/", {
-      query: { token },
-    });
-
-    socketRef.current.on('connect', () => {
-      console.log('Socket connected');
-    });
-
-    socketRef.current.on('connect_error', (error) => {
-      console.error('Socket connection error:', error);
-    });
-
-    socketRef.current.on("employee_created", (data) => {
-      setEmployees((prevEmployees) => {
-        return [...prevEmployees, data.attendance];
+    if (!socketRef.current) {
+      socketRef.current = io("http://localhost:5000/", {
+        query: { token },
       });
-    });
 
-    socketRef.current.on("employee_clocked_in", (data) => {
-      setMessage(`${data.name} has clocked in.`);
-      setEmployees((prevEmployees) =>
-        prevEmployees.map((emp) =>
-          emp.id === data.id
-            ? { ...emp, clock_in_status: "Clocked In" }
-            : emp
-        )
-      );
-    });
+      socketRef.current.on("connect", () => {
+        console.log("Socket connected");
+      });
+
+      socketRef.current.on("connect_error", (error) => {
+        console.error("Socket connection error:", error);
+      });
+
+      socketRef.current.on("employee_created", (data) => {
+        setEmployees((prevEmployees) => [...prevEmployees, data.attendance]);
+      });
+
+      socketRef.current.on("employee_clocked_in", (data) => {
+        setMessage(`${data.name} has clocked in.`);
+        setEmployees((prevEmployees) =>
+          prevEmployees.map((emp) =>
+            emp.id === data.id
+              ? { ...emp, clock_in_status: "Clocked In" }
+              : emp
+          )
+        );
+      });
+
+      socketRef.current.on("leave_request", (data) => {
+        setLeaveRequests((prev) => [...prev, data]);
+        // console.log("new leave request:", data);
+      });
+
+      socketRef.current.on("overtime_request", (data) => {
+        setOvertimeRequests((prev) => [...prev, data]);
+      });
+    }
 
     return () => {
-      if (socketRef.current.connected) {
+      if (socketRef.current) {
+        socketRef.current.off("employee_created");
+        socketRef.current.off("employee_clocked_in");
+        socketRef.current.off("leave_request");
+        socketRef.current.off("overtime_request");
+
+        // Disconnect socket
         socketRef.current.disconnect();
+        socketRef.current = null;
       }
     };
   }, []);
 
   const handleEditField = (id, field, value) => {
-    const token = localStorage.getItem("token");
 
-    fetch(`https://localhost:5000/employee/${id}/edit`, {
+    fetch(`http://localhost:5000/employee/${id}/edit`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -105,8 +136,7 @@ const AdminDashboard = () => {
   };
 
   const handleAddEmployee = () => {
-    const token = localStorage.getItem("token");
-    fetch("https://localhost:5000/register", {
+    fetch("http://localhost:5000/register", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -124,14 +154,13 @@ const AdminDashboard = () => {
   };
 
   const handleAddWarning = (empId) => {
-    const token = localStorage.getItem("token");
 
     if (!warningText.trim()) {
       setMessage("Warning text cannot be empty");
       return;
     }
 
-    fetch(`https://localhost:5000/${empId}/add-warning`, {
+    fetch(`http://localhost:5000/${empId}/add-warning`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -157,11 +186,74 @@ const AdminDashboard = () => {
       .catch((err) => console.error("Error adding warning:", err));
   };
   
+  const handleRequestAction = (id, type, status) => {
+    let endpoint = "";
+    if (type === "leave") {
+      endpoint = `http://localhost:5000/admin/${status}-leave/${id}`;
+    } else if (type === "overtime") {
+      endpoint = `http://localhost:5000/admin/${status}-overtime/${id}`;
+    }
+    console.log('', `${id}`)
+  
+    fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    })
+      .then((response) => response.json())
+      .then(() => {
+        if (type === "leave") {
+          setLeaveRequests((prev) => prev.filter((req) => req.id !== id));
+        } else {
+          setOvertimeRequests((prev) => prev.filter((req) => req.id !== id));
+        }
+      })
+      .catch((err) => console.error(`Error updating ${type} request:`, err));
+  };
+  
 
   return (
     <div className="dashboard-container">
       <h1 className="dashboard-title">Admin Dashboard</h1>
-  
+
+      <div className="notification-container">
+        <FaBell className="notification-icon" onClick={() => setShowDropdown(!showDropdown)} />
+        {(leaveRequests.length > 0 || overtimeRequests.length > 0) && (
+          <span className="notification-badge">{leaveRequests.length + overtimeRequests.length}</span>
+        )}
+        
+        {showDropdown && (
+          <div className="notification-dropdown">
+            <h3>Leave Requests</h3>
+            {leaveRequests.length > 0 ? (
+              leaveRequests.map((req) => (
+                <div key={req.id} className="notification-item">
+                  <p>{req.email} - {req.days} days</p>
+                  <button onClick={() => handleRequestAction(req.id, "leave", "approve")}>Approve</button>
+                  <button onClick={() => handleRequestAction(req.id, "leave", "reject")}>Reject</button>
+                </div>
+              ))
+            ) : (
+              <p>No leave requests</p>
+            )}
+            
+            <h3>Overtime Requests</h3>
+            {overtimeRequests.length > 0 ? (
+              overtimeRequests.map((req) => (
+                <div key={req.id} className="notification-item">
+                  <p>{req.email} - {req.hours} hours</p>
+                  <button onClick={() => handleRequestAction(req.id, "overtime", "approve")}>Approve</button>
+                  <button onClick={() => handleRequestAction(req.id, "overtime", "reject")}>Reject</button>
+                </div>
+              ))
+            ) : (
+              <p>No overtime requests</p>
+            )}
+          </div>
+        )}
+      </div>
       <button
         className="add-employee-button"
         onClick={() => setShowAddEmployeeForm(true)}

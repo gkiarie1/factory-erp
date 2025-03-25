@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Modal, Button, Badge } from 'react-bootstrap';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
+import { io } from 'socket.io-client';
+
 
 const EmployeeProfile = () => {
   const [profile, setProfile] = useState({
@@ -21,23 +23,63 @@ const EmployeeProfile = () => {
   const [showOvertimeCalendar, setShowOvertimeCalendar] = useState(false);
   const [selectedLeaveDate, setSelectedLeaveDate] = useState(null);
   const [selectedOvertimeDate, setSelectedOvertimeDate] = useState(null);
+  const [rejectionMessage, setRejectionMessage] = useState(null);
+
+  const getAuthToken = () => {
+    const employeeToken = localStorage.getItem("employee_token");
+    const employeeRole = localStorage.getItem("employee_role");
+  
+    if (employeeToken && employeeRole === "employee") {
+      return employeeToken;
+    } else {
+      return null; 
+    }
+  };
+
+  const eToken = getAuthToken();
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    fetch('https://localhost:5000/employee/profile', {
-      headers: { Authorization: `Bearer ${token}` },
+    fetch('http://localhost:5000/employee/profile', {
+      headers: { Authorization: `Bearer ${eToken}` },
     })
-      .then((response) => response.json())
+      .then((response) => {
+        return response.json();
+      })
       .then((data) => setProfile(data))
-      .catch((err) => console.error(err));
+      .catch((err) => console.error("Fetch error:", err));
+  }, []);
+  
+  
+  useEffect(() => {
+    const socket = io('http://localhost:5000');
+    socket.on('leave_approved', (data) => {
+      alert(`Leave approved for ${data.name} on ${data.leave_date}`);
+    });
+
+    socket.on('leave_rejected', (data) => {
+      setRejectionMessage(`Leave request rejected: ${data.reason}`);
+    });
+
+    socket.on('overtime_approved', (data) => {
+      alert(`Overtime approved for ${data.name}, ${data.overtime_hours} extra hours`);
+    });
+
+    socket.on('overtime_rejected', (data) => {
+      setRejectionMessage(`Overtime request rejected: ${data.reason}`);
+    });
+    return () => {
+      socket.off('leave_approved');
+      socket.off('leave_rejected');
+      socket.off('overtime_approved');
+      socket.off('overtime_rejected');
+    };
   }, []);
 
   const handleLeaveSubmit = () => {
-    const token = localStorage.getItem('token');
-    fetch('https://localhost:5000/employee/apply-leave', {
+    fetch('http://localhost:5000/employee/apply-leave', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${eToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ leave_date: selectedLeaveDate }),
@@ -51,11 +93,10 @@ const EmployeeProfile = () => {
   };
 
   const handleOvertimeSubmit = () => {
-    const token = localStorage.getItem('token');
-    fetch('https://localhost:5000/employee/apply-overtime', {
+    fetch('http://localhost:5000/employee/apply-overtime', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${eToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ overtime_date: selectedOvertimeDate }),
@@ -111,6 +152,8 @@ const EmployeeProfile = () => {
           </div>
         </div>
       </div>
+
+      {rejectionMessage && <p className="rejection-message">{rejectionMessage}</p>}
 
       {/* Warnings Modal */}
       <Modal show={showWarningsModal} onHide={() => setShowWarningsModal(false)}>

@@ -1,13 +1,13 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
 from models import db, User, Employee
-from flask_socketio import emit
 import datetime
 import uuid
 from werkzeug.security import generate_password_hash, check_password_hash
+from extensions import db, socketio, bcrypt
+from flask_socketio import emit
 
 routes_bp = Blueprint('routes', __name__)
-
 # ------------------ AUTH ROUTES ------------------ #
 
 @routes_bp.route('/all', methods=['GET'])
@@ -51,19 +51,21 @@ def register():
 
     db.session.commit()
 
-    emit('employee_created', {'staff_id': staff_id, 'name': name, 'role': role}, broadcast=True)
+    socketio.emit('employee_created', {'staff_id': staff_id, 'name': name, 'role': role}, broadcast=True)
     return jsonify({'message': 'User created successfully!', 'staff_id': staff_id}), 201
 
 
 @routes_bp.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    staff_id, password = data.get('staff_id'), data.get('password')
+    staff_id = data.get('staff_id')
+    password = data.get('password')
 
     user = User.query.filter_by(staff_id=staff_id).first()
-    if user and check_password_hash(user.password, password):
+    if user and bcrypt.check_password_hash(user.password, password):
         access_token = create_access_token(identity=user.id, expires_delta=datetime.timedelta(days=1))
-
+        
+        # Update clock-in status if employee logs in
         if user.role == 'employee':
             employee = Employee.query.filter_by(staff_id=staff_id).first()
             if employee:
@@ -71,10 +73,11 @@ def login():
                 employee.clock_in_status_timestamp = datetime.datetime.now()
                 db.session.commit()
 
-                emit('employee_clocked_in', {'employee_id': employee.id, 'name': employee.name}, broadcast=True)
+                
+                # Emit clock-in event
+                socketio.emit('employee_clocked_in', {'employee_id': employee.id, 'name': employee.name})
 
-        return jsonify({'access_token': access_token, 'role': user.role}), 200
-
+        return jsonify({'access_token': access_token, 'role': user.role}), 200 
     return jsonify({'message': 'Invalid credentials'}), 401
 
 
@@ -100,7 +103,7 @@ def clock_out():
         employee.clock_in_status = 'Not Clocked In'
         db.session.commit()
 
-        emit('employee_clocked_out', {'employee_id': employee.id, 'name': employee.name}, broadcast=True)
+        socketio.emit('employee_clocked_out', {'employee_id': employee.id, 'name': employee.name}, broadcast=True)
         return jsonify({'message': 'Clocked Out successfully!'}), 200
 
     return jsonify({'message': 'Employee not found'}), 404
@@ -111,7 +114,11 @@ def clock_out():
 def get_employee_profile():
     current_user = get_jwt_identity()
     user = User.query.get(current_user)
+    print(user)
 
+    if not user or not user.employee_id:
+        return jsonify({'message': 'Unauthorized'}), 403
+    
     employee = Employee.query.get(user.employee_id)
     if not employee:
         return jsonify({'message': 'Profile not found'}), 404
@@ -121,7 +128,7 @@ def get_employee_profile():
         'name': employee.name,
         'clock_in_status': employee.clock_in_status,
         'machine_line': employee.machine_line,
-        'leave_days': employee.leave_day,
+        'leave_days': employee.remaining_leave_days,
         'warnings': employee.warnings,
         'contract_details': employee.contract_details or 'No contract details',
         'overtime_hours': employee.overtime_hours
@@ -137,7 +144,7 @@ def apply_leave():
     data = request.get_json()
     leave_date = data.get('leave_date')
 
-    emit('leave_request', {'employee_id': user.employee_id, 'name': user.name, 'leave_date': leave_date}, broadcast=True)
+    socketio.emit('leave_request', {'id': user.id, 'email': user.email, 'leave_date': leave_date})
     return jsonify({'message': 'Leave request submitted successfully!'}), 200
 
 
@@ -150,7 +157,7 @@ def apply_overtime():
     data = request.get_json()
     overtime_date = data.get('overtime_date')
 
-    emit('overtime_request', {'employee_id': user.employee_id, 'name': user.name, 'overtime_date': overtime_date}, broadcast=True)
+    socketio.emit('overtime_request', {'id': user.id, 'email': user.email, 'overtime_date': overtime_date})
     return jsonify({'message': 'Overtime request submitted successfully!'}), 200
 
 
@@ -170,7 +177,7 @@ def admin_dashboard():
         'id': emp.id, 'staff_id': emp.staff_id, 'name': emp.name,
         'contract_details': emp.contract_details or 'No contract details',
         'clock_in_status': emp.clock_in_status, 'machine_line': emp.machine_line,
-        'leave_days': emp.leave_day, 'warnings': emp.warnings, 'overtime_hours': emp.overtime_hours
+        'leave_days': emp.remaining_leave_days, 'warnings': emp.warnings, 'overtime_hours': emp.overtime_hours
     } for emp in employees]}), 200
 
 
@@ -194,3 +201,96 @@ def add_warning(employee_id):
         return jsonify({'message': 'Warning added successfully!'}), 200
 
     return jsonify({'message': 'Employee not found'}), 404
+
+# ------------------ APPROVAL ROUTES ------------------ #
+
+@routes_bp.route('/admin/approve-leave/<int:employee_id>', methods=['POST'])
+@jwt_required()
+def approve_leave(employee_id):
+    current_user = get_jwt_identity()
+    admin_user = User.query.get(current_user)
+
+    if not admin_user or admin_user.role != 'admin':
+        return jsonify({'message': 'Unauthorized'}), 403
+
+    employee = Employee.query.get(employee_id)
+    if not employee:
+        return jsonify({'message': 'Employee not found'}), 404
+
+    data = request.get_json()
+    leave_date = data.get('leave_date')
+
+    employee.leave_day = leave_date  
+    db.session.commit()
+
+    socketio.emit('leave_approved', {'employee_id': employee.id, 'name': employee.name, 'leave_date': leave_date})
+    return jsonify({'message': 'Leave approved successfully!'}), 200
+
+@routes_bp.route('/admin/reject-leave/<int:employee_id>', methods=['POST'])
+@jwt_required()
+def reject_leave(employee_id): 
+    current_user = get_jwt_identity()
+    admin_user = User.query.get(current_user)
+    print(admin_user)
+    
+
+    if not admin_user or admin_user.role != 'admin':
+        return jsonify({'message': 'Unauthorized'}), 403
+
+    employee = Employee.query.get(employee_id)
+    if not employee:
+        return jsonify({'message': 'Employee not found'}), 404
+
+    data = request.get_json()
+    reason = data.get('reason', 'No reason provided')
+
+    employee.rejected_leaves.append({'date': data.get('leave_date'), 'reason': reason})
+    db.session.commit()
+
+    socketio.emit('leave_rejected', {'employee_id': employee_id, 'reason': reason})
+    return jsonify({'message': 'Leave request rejected and recorded'}), 200
+
+
+@routes_bp.route('/admin/approve-overtime/<int:employee_id>', methods=['POST'])
+@jwt_required()
+def approve_overtime(employee_id):
+    current_user = get_jwt_identity()
+    admin_user = User.query.get(current_user)
+
+    if not admin_user or admin_user.role != 'admin':
+        return jsonify({'message': 'Unauthorized'}), 403
+
+    employee = Employee.query.get(employee_id)
+    if not employee:
+        return jsonify({'message': 'Employee not found'}), 404
+
+    data = request.get_json()
+    overtime_hours = data.get('overtime_hours', 0)
+
+    employee.overtime_hours += overtime_hours
+    db.session.commit()
+
+    socketio.emit('overtime_approved', {'employee_id': employee.id, 'name': employee.name, 'overtime_hours': overtime_hours})
+    return jsonify({'message': 'Overtime approved successfully!'}), 200
+
+@routes_bp.route('/admin/reject-overtime/<int:employee_id>', methods=['POST'])
+@jwt_required()
+def reject_overtime(employee_id):
+    current_user = get_jwt_identity()
+    admin_user = User.query.get(current_user)
+
+    if not admin_user or admin_user.role != 'admin':
+        return jsonify({'message': 'Unauthorized'}), 403
+
+    employee = Employee.query.get(employee_id)
+    if not employee:
+        return jsonify({'message': 'Employee not found'}), 404
+
+    data = request.get_json()
+    reason = data.get('reason', 'No reason provided')
+
+    employee.rejected_overtimes.append({'date': data.get('overtime_date'), 'reason': reason})
+    db.session.commit()
+
+    socketio.emit('overtime_rejected', {'employee_id': employee_id, 'reason': reason})
+    return jsonify({'message': 'Overtime request rejected and recorded'}), 200
