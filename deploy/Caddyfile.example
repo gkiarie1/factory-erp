@@ -1,0 +1,9 @@
+# Install Caddy on the host and replace this domain with your configured public host.
+# DNS must point to the server and ports 80/443 must be reachable.
+factory.example.com {
+    reverse_proxy 127.0.0.1:8080 {
+        header_up X-Real-IP {remote_host}
+    }
+    header Strict-Transport-Security "max-age=31536000"
+    # Do not enable request logs containing query strings; recovery links are sensitive.
+}

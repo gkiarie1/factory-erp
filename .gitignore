@@ -1,0 +1,16 @@
+# Dependencies and generated files
+**/node_modules/
+**/.venv/
+**/venv/
+**/__pycache__/
+*.py[cod]
+backend/instance/
+frontend/build/
+.env
+.env.*
+!.env.example
+ANALYSIS.md
+backups/
+*.dump
+
+**/.vitest/
